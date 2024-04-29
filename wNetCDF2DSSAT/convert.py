@@ -19,10 +19,10 @@ import inspect
 import math
 from matplotlib import pyplot as plt
 import shapefile as shp
-
 import geopandas as gpd
 from shapely.geometry import Polygon
-
+import warnings
+warnings.simplefilter('ignore')
 
 ### CLASS :: Initial Global variables and Method
 class mainDefind:
@@ -934,7 +934,7 @@ class nc2wth(mainDefind):
         self.display(self.GB_dataset_1y) 
         #self.GB_dataset_1y.to_csv("tmp.csv")       
         
-        for inx, latlon_convert in tqdm(self.latlon_convert.iterrows()):
+        for inx, latlon_convert in tqdm(self.latlon_convert.iterrows(),total=(len(self.latlon_convert))):
             lat_data_1 = latlon_convert["Latitude"]
             lon_data_1 = latlon_convert["Longitude"]
             
