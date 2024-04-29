@@ -6,7 +6,7 @@ setup(
     packages=find_packages(),
     description='Description of my library',
     author='RU-CORE',
-    author_email='rucore.center@gmail.com, nick.ratchanan@gmail.com',:
+    author_email='rucore.center@gmail.com, nick.ratchanan@gmail.com',
     url='https://github.com/RU-CORE-LAB/wNetCDF2DSSAT',
     install_requires=[
         'cftime>=1.6.3',
