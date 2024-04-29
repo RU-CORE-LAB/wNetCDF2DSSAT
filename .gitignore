@@ -3,5 +3,5 @@
 
 .ipynb*
 *.pyc
-
+.gitignore
 wNetCDF2DSSAT/__pycache__/convert.cpython-312.pyc
