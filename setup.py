@@ -3,8 +3,8 @@ from setuptools import setup, find_packages
 setup(
     name='wNetCDF2DSSAT',
     version='1.3',
-    packages=find_packages(),
-    description='Description of my library',
+    packages=['wNetCDF2DSSAT']
+    description='The wNetCDF2DSSAT is a Python library for converting Networked Common Data Form (NetCDF) to DSSAT input data format.',
     author='RU-CORE',
     author_email='rucore.center@gmail.com, nick.ratchanan@gmail.com',
     url='https://github.com/RU-CORE-LAB/wNetCDF2DSSAT',
