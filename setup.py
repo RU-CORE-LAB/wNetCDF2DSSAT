@@ -4,6 +4,8 @@ setup(
     name='wNetCDF2DSSAT',
     version='1.3',
     packages=['wNetCDF2DSSAT'],
+    package_data={'wNetCDF2DSSAT': ['topology/*.nc']},
+    include_package_data=True,
     description='The wNetCDF2DSSAT is a Python library for converting Networked Common Data Form (NetCDF) to DSSAT input data format.',
     author='RU-CORE',
     author_email='rucore.center@gmail.com, nick.ratchanan@gmail.com',
