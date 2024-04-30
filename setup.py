@@ -13,6 +13,7 @@ setup(
         'h5netcdf',
         'geopandas',
         'netCDF4',
+        'h5py',
         'pandas',
         'pyshp',
         'xarray',
