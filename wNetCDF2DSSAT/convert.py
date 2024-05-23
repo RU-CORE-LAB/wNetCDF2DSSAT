@@ -181,7 +181,8 @@ class getFileProcess(mainDefind):
                     list_file   = strName.replace("\\", "/")
                     temp_open   = self.xnc_dataset(list_file,self.GB_dropvars).to_dataframe()
                     
-                    date_index  = temp_open.index[0][0]
+                    # date_index  = temp_open.index.get_level_values(self.GB_climate_coordinates_name["time"])[0]
+                    date_index  = temp_open.index.get_level_values(self.GB_climate_coordinates_name["time"])[0]
                     yy=0;mm=0
                     if(isinstance(date_index, cftime._cftime.Datetime360Day)) :
                         yy          = date_index.year
@@ -293,12 +294,12 @@ class netcdf2dataframe(mainDefind):
                     control_first_day           = tuple(list_control_first_day)
                     if (chk_pass):
                         self.local_data_set.append(temp_df)
-                        if(isinstance(temp_df.index[0][0], cftime._cftime.Datetime360Day)) :
-                            last_month = temp_df.index[0][0].month
-                            self.display("load dataset [%s]: %s/%s"%(var_name,temp_df.index[0][0].year,self.endYear))
+                        if(isinstance(temp_df.index.get_level_values(self.GB_climate_coordinates_name["time"])[0], cftime._cftime.Datetime360Day)) :
+                            last_month = temp_df.index.get_level_values(self.GB_climate_coordinates_name["time"])[0].month
+                            self.display("load dataset [%s]: %s/%s"%(var_name,temp_df.index.get_level_values(self.GB_climate_coordinates_name["time"])[0].year,self.endYear))
                         else:
-                            last_month = temp_df.index[0][0].date().month
-                            self.display("load dataset [%s]: %s/%s"%(var_name,temp_df.index[0][0].date().year,self.endYear))
+                            last_month = temp_df.index.get_level_values(self.GB_climate_coordinates_name["time"])[0].date().month
+                            self.display("load dataset [%s]: %s/%s"%(var_name,temp_df.index.get_level_values(self.GB_climate_coordinates_name["time"])[0].date().year,self.endYear))
                     else:
                         print("Please Files in directory : %s" %(row[var_path]))
                         exit()
@@ -307,15 +308,15 @@ class netcdf2dataframe(mainDefind):
 
                         self.local_data_set = list()
                 else:
-                    if(isinstance(temp_df.index[0][0], cftime._cftime.Datetime360Day)) :
-                        temp_month  = temp_df.index[0][0].month
+                    if(isinstance(temp_df.index.get_level_values(self.GB_climate_coordinates_name["time"])[0], cftime._cftime.Datetime360Day)) :
+                        temp_month  = temp_df.index.get_level_values(self.GB_climate_coordinates_name["time"])[0].month
                     else:
-                        temp_month  = temp_df.index[0][0].date().month
+                        temp_month  = temp_df.index.get_level_values(self.GB_climate_coordinates_name["time"])[0].date().month
                     # Check next month
                     if last_month == temp_month - 1:
                         #print(temp_df)
                         self.local_data_set.append(temp_df)
-                        #self.display("load dataset [%s]: %s/%s"%(var_name,temp_df.index[0][0].date().year,temp_df.index[0][0].date().month))
+                        #self.display("load dataset [%s]: %s/%s"%(var_name,temp_df.index.get_level_values(self.GB_climate_coordinates_name["time"])[0].date().year,temp_df.index.get_level_values(self.GB_climate_coordinates_name["time"])[0].date().month))
                         list_control_next_month         = list(control_next_month)
                         list_control_next_month[idx]    = True
                         control_next_month              = tuple(list_control_next_month)
@@ -323,7 +324,7 @@ class netcdf2dataframe(mainDefind):
                         if(control_next_month == control_true):
                             last_month          = temp_month
                             control_next_month  = control_false #(False,False,False,False,False,False,False,False)
-                            #self.display("load dataset [%s]: %s/%s"%(var_name,temp_df.index[0][0].date().year,temp_df.index[0][0].date().month))
+                            #self.display("load dataset [%s]: %s/%s"%(var_name,temp_df.index.get_level_values(self.GB_climate_coordinates_name["time"])[0].date().year,temp_df.index.get_level_values(self.GB_climate_coordinates_name["time"])[0].date().month))
                             #self.dataset = self.dataset.append(self.merge_df(),sort=False)
                             self.GB_dataset_1y  = pd.concat([self.GB_dataset_1y,netcdf2dataframe.merge_df(self, self.local_data_set)],sort=False)
                             self.local_data_set = list()
@@ -338,10 +339,10 @@ class netcdf2dataframe(mainDefind):
                     if (control_end_year == control_true):
                         ##print("done.")
                         self.display("Converting ... ")
-                        if(isinstance(temp_df.index[0][0], cftime._cftime.Datetime360Day)) :
-                            this_year = temp_df.index[0][0].year
+                        if(isinstance(temp_df.index.get_level_values(self.GB_climate_coordinates_name["time"])[0], cftime._cftime.Datetime360Day)) :
+                            this_year = temp_df.index.get_level_values(self.GB_climate_coordinates_name["time"])[0].year
                         else:
-                            this_year = temp_df.index[0][0].date().year
+                            this_year = temp_df.index.get_level_values(self.GB_climate_coordinates_name["time"])[0].date().year
 
                         if(self.load_topo == False):
                             # if  self.load_topo    = True  :When Created Shapefile
@@ -460,7 +461,9 @@ class netcdf2dataframe(mainDefind):
                 var_path        = var_name                 
                 df_DATASET = self.xnc_dataset(row[var_path],self.GB_dropvars)             # xr.open_dataset(row[var_path],drop_variables=self.dropvars)
                 temp_df = self.xnc_to_dataframe(df_DATASET)                               # self.GB_DATASET.to_dataframe()
-                df_date_index = temp_df.index[0][0]
+                # df_date_index = temp_df.index.get_level_values(self.GB_climate_coordinates_name["time"])[0]
+                
+                df_date_index = temp_df.index.get_level_values(self.GB_climate_coordinates_name["time"])[0]
 
                 if (control_first_day[idx] == False) :
                     chk_pass                    = netcdf2dataframe.check_1_jan(self,df_DATASET)
@@ -497,7 +500,7 @@ class netcdf2dataframe(mainDefind):
                     if last_month == temp_month - 1:
                         #print(temp_df)
                         self.local_data_set.append(temp_df)
-                        #self.display("load dataset [%s]: %s/%s"%(var_name,temp_df.index[0][0].date().year,temp_df.index[0][0].date().month))
+                        #self.display("load dataset [%s]: %s/%s"%(var_name,temp_df.index.get_level_values(self.GB_climate_coordinates_name["time"])[0].date().year,temp_df.index.get_level_values(self.GB_climate_coordinates_name["time"])[0].date().month))
                         list_control_next_month         = list(control_next_month)
                         list_control_next_month[idx]    = True
                         control_next_month              = tuple(list_control_next_month)
@@ -505,7 +508,7 @@ class netcdf2dataframe(mainDefind):
                         if(control_next_month == control_true):
                             last_month          = temp_month 
                             control_next_month  = control_false #(False,False,False,False,False,False,False,False)  
-                            #self.display("load dataset [%s]: %s/%s"%(var_name,temp_df.index[0][0].date().year,temp_df.index[0][0].date().month))                          
+                            #self.display("load dataset [%s]: %s/%s"%(var_name,temp_df.index.get_level_values(self.GB_climate_coordinates_name["time"])[0].date().year,temp_df.index.get_level_values(self.GB_climate_coordinates_name["time"])[0].date().month))                          
                             #self.dataset = self.dataset.append(self.merge_df(),sort=False)  
                             self.GB_dataset_1y  = pd.concat([self.GB_dataset_1y,netcdf2dataframe.merge_df(self, self.local_data_set)],sort=False)                         
                             self.local_data_set = list()
@@ -622,7 +625,8 @@ class netcdf2dataframe(mainDefind):
     def check_1_jan(self,df_DATASET):
         temp_df = df_DATASET.to_dataframe()
 
-        date_index  = temp_df.index[0][0]
+        # date_index  = temp_df.index.get_level_values(self.GB_climate_coordinates_name["time"])[0]
+        date_index = temp_df.index.get_level_values(self.GB_climate_coordinates_name["time"])[0]
         dd=0
         mm=0
         if(isinstance(date_index, cftime._cftime.Datetime360Day)) :
@@ -886,15 +890,15 @@ class nc2wth(mainDefind):
 
     def avg_Tmaxmin(self,Tmax,Tmin) :
         
-        #print(Tmax.index[0][0].month)
+        #print(Tmax.index.get_level_values(self.GB_climate_coordinates_name["time"])[0].month)
         Tmax_chk=0;Tmin_chk=0
         #print(Tmax)
-        if(isinstance(Tmax.index[0][0], cftime._cftime.Datetime360Day)) : 
-            Tmax_chk = [i[0].month for i in  Tmax.index]
-            Tmin_chk = [i[0].month for i in  Tmin.index]
+        if(isinstance(Tmax.index.get_level_values(self.GB_climate_coordinates_name["time"])[0], cftime._cftime.Datetime360Day)) : 
+            Tmax_chk = [i.month for i in  Tmax.index.get_level_values(self.GB_climate_coordinates_name["time"])]
+            Tmin_chk = [i.month for i in  Tmin.index.get_level_values(self.GB_climate_coordinates_name["time"])]
         else:
-            Tmax_chk = [i[0].date().month for i in  Tmax.index]
-            Tmin_chk = [i[0].date().month for i in  Tmin.index]
+            Tmax_chk = [i.date().month for i in  Tmax.index.get_level_values(self.GB_climate_coordinates_name["time"])]
+            Tmin_chk = [i.date().month for i in  Tmin.index.get_level_values(self.GB_climate_coordinates_name["time"])]
         
         localTmax = Tmax.to_frame().reset_index(drop=True) 
         localTmin = Tmin.to_frame().reset_index(drop=True)
@@ -982,7 +986,7 @@ class nc2wth(mainDefind):
             tmht            = 2.0                                # m
             wndht           = 2.0                                # m
             
-            inx_df1grid     = [nc2wth.num_of_row_df1grid(self,i[0]) for i in  df1grid.index] 
+            inx_df1grid     = [nc2wth.num_of_row_df1grid(self,i) for i in  df1grid.index.get_level_values(self.GB_climate_coordinates_name["time"])] 
             
             # Solve : Blank space first
             # df_test_test = pd.DataFrame(inx_df1grid)
