@@ -22,6 +22,7 @@ setup(
         'xarray',
         'tqdm',
         'matplotlib',
+        'python-cmethods',
 
         #'cftime>=1.6.3',
         #'h5netcdf>=1.3.0',
