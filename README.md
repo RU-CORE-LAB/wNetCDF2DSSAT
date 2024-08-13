@@ -79,6 +79,7 @@ This command line is used to let the library recognize the variable names for ne
 >>> nObj.bias_correction(bias_method = "quantile_mapping", n_quantiles = 250, group = "", kind = "+") 
 ```
 This command line is used to bias correct the climate data by using ReAnalysis data as reference. Step 8 – Step 11 need to be carried out before proceed with Step 12 in case that the model simulation data exhibits substantial systematic biases and bias correction cannot be disregarded. However, these steps can be omitted if the model simulation data have high performance to reproduce the historical climate. In this example, the quantile mapping technique is applied to bias adjust the climate data using ReAnalysis-ERA5 as reference. 
+>> Include bias library: https://github.com/btschwertfeger/python-cmethods
 
 > **Step12.** Covert the data.
 ```
