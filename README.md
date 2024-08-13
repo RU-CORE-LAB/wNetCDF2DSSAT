@@ -86,3 +86,12 @@ This command line is used to bias correct the climate data by using ReAnalysis d
 ```
 This command line is used to transform the climate variables with a specific time period from the NetCDF to DSSAT ASCII format and stored them in the specified folder. In this example, the files are stored in the folder “/DSSAT_output/”). The data set is the historical period from 1970 – 2005 and stored in individual files. 
 
+## Data Source (inp files)
+> Regional climate model Data.
+https://esg-dn1.nsc.liu.se/search/cordex/
+Search Constraints:   SEA-22 | esg-dn1.ru.ac.th | historical,rcp45,rcp85 | hus,pr,rsds,sfcWind,tas,tasmax,tasmin | RU-CORE | MPI-M-MPI-ESM-MR | r1i1p1 | day | RegCM4-7
+
+> ReAnalysis Data (EAR5)
+https://cds.climate.copernicus.eu/cdsapp#!/dataset/reanalysis-era5-single-levels
+
+>> variables : t2m, mn2t, mn2t, tp
