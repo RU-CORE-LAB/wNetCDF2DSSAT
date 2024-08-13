@@ -1,6 +1,6 @@
 # ::::::::::::::::::::::::::::::::::::::::::::::::::::::::
 # Start up @ Aug 2022
-# _wNetCDF2DSSAT.py Version 1.3
+# _wNetCDF2DSSAT.py Version 1.4
 # Written by Nick Ratchanan (RU-CORE).
 # ::::::::::::::::::::::::::::::::::::::::::::::::::::::::
 
@@ -22,6 +22,7 @@ import shapefile as shp
 import geopandas as gpd
 from shapely.geometry import Polygon
 import warnings
+from cmethods import adjust
 warnings.simplefilter('ignore')
 
 ### CLASS :: Initial Global variables and Method
@@ -57,7 +58,14 @@ class mainDefind:
         self.blank                        = " " # " " : is space.
         self.file_wth_name                = ""  # wth file name.
         self.file_wth_proc                = ""  # wth location + filename.
-        
+        self.GB_OBS_bias_status           = False
+        self.GB_OBS_path                  = ""
+        self.GB_OBS_coordinates_name      = {}
+        self.GB_OBS_variables_name        = {}
+        self.GB_OBS_bias_option           = {}
+        self.GB_experiment                = ""
+        self.GB_startYear                 = ""
+        self.GB_endYear                   = ""
         self.GB_data_topo                 = pd.DataFrame()
         self.GB_lat_topo                  = []
         self.GB_lon_topo                  = []
@@ -74,6 +82,7 @@ class mainDefind:
         self.tb_historical_global_T       = pd.DataFrame()
         self.TAV                          = {}
         self.TAMP                         = {}
+        
 
     # Display for Debug        
     def display(self,obj , mode="0"):
@@ -91,8 +100,8 @@ class mainDefind:
         try:
             return xr.open_dataset(file,drop_variables=drop_var)
         except:
-            print("Incomplete file: %s"%file)
-            exit()
+            raise ValueError("Incomplete file: %s"%file)
+            
         
     def xnc_to_dataframe(self,nco):
         return nco.to_dataframe()               # xarray open_dataset to dataframe
@@ -124,14 +133,31 @@ class mainDefind:
             os.makedirs(dir, exist_ok=True) 
         except OSError as error: 
             pass 
+
+    def print_attrs(title, attrs):
+        print(f"\n{title}:")
+        for key, value in attrs.items():
+            print(f"  {key}: {value}")
     
     def ncdump(self,f):
         nco = self.xnc_dataset(f)
         var_name = nco.data_vars
         dimen = nco.coords
-        
+        #xr.set_options(display_width=1000, display_expand_data=True)
+        # แสดงข้อมูลทั้งหมดของ Dataset
+        #print(nco)
         print (dimen)
         print (var_name)
+        
+        #print(nco.attrs)
+        
+        # แสดง attributes ของตัวแปรแต่ละตัว
+        for var_name in nco.data_vars:
+            print(f"\nAttributes of variable '{var_name}':")
+            print(nco[var_name].attrs)
+        #print (dimen)
+        #print (var_name)
+       
         print ("")
         
     def map_plot(self,lon,lat,var_name,data):
@@ -162,12 +188,152 @@ class mainDefind:
 class getFileProcess(mainDefind):
     def __init__(self):
         mainDefind.__init__(self)
-    
+            
     def convert_to_dt(x):
         return datetime.strptime(str(x), '%Y-%m-%d %H:%M:%S')   
+        
+    def get_file_list(self,sYR,eYR):
+        #self.GB_input_path
+        self.GB_list_file_process = pd.DataFrame()
+        for var_name in self.GB_climate_variable_name.values():
+            print(f"get file {var_name}")
+            glob_arg        = self.GB_input_path + "/" + var_name + "/"
+            lfile = getFileProcess.get_files_sorted_by_date_range(self,glob_arg, sYR, eYR, var_name,False)
+                     
+            df = pd.DataFrame(lfile, columns=[var_name, 'year', 'month'])
+            df = df[['year', 'month',var_name]]
+            
+            if(len(self.GB_list_file_process) == 0 ):
+                self.GB_list_file_process = df
+            else:
+                self.GB_list_file_process = pd.merge(self.GB_list_file_process, df, on=['year', 'month'], how='outer')
+        #print(self.GB_list_file_process)
+            if ((self.GB_OBS_bias_status == True) and (self.GB_experiment == "historical")):
+                obs_var = ""
+                if( var_name == self.GB_climate_variable_name['rain']):
+                    obs_var = self.GB_OBS_variables_name['pr']
+                elif( var_name == self.GB_climate_variable_name['tmean']):
+                    obs_var = self.GB_OBS_variables_name['tas']
+                elif( var_name == self.GB_climate_variable_name['tmax']):
+                    obs_var = self.GB_OBS_variables_name['tmax']
+                elif( var_name == self.GB_climate_variable_name['tmin']):
+                    obs_var = self.GB_OBS_variables_name['tmin']
+                else:
+                    obs_var = ""
+    
+                if (obs_var !=""):
+                    for in_filename, in_year, in_month in lfile:
+                        rcm_ = xr.open_dataset(f"input_preprocess/{var_name}/{in_filename}")
+                        
+                        formatted_month = f"{in_month:02d}"
+                        
+                        obs_path = self.GB_OBS_path + obs_var
+                        obs_file = os.path.join(obs_path, f"{obs_var}_{in_year}_{formatted_month}.nc")
+                        obs_lat = self.GB_OBS_coordinates_name['lat']
+                        obs_lon = self.GB_OBS_coordinates_name['lon']
+                        rcm_lat_name = self.GB_climate_coordinates_name["lat"]
+                        rcm_lon_name = self.GB_climate_coordinates_name["lon"]
+                        #print(obs_file)
+                        try:
+                            obs_data = xr.open_dataset(obs_file)
+                            
+                            obs_data = obs_data.rename({obs_lat: rcm_lat_name, obs_lon: rcm_lon_name, obs_var: obs_var})
+                            data_interpolated = obs_data[obs_var].interp(lat=rcm_[rcm_lat_name], lon=rcm_[rcm_lon_name])
+    
+                            if(var_name == "pr"):
+                                data_obs = ((data_interpolated*1000)/86400).resample(time='D').sum()
+                            else:
+                                data_obs = ((data_interpolated)).resample(time='D').mean()
+                            
+                            new_obs_file = xr.Dataset({
+                                rcm_lat_name: rcm_[rcm_lat_name],
+                                rcm_lon_name: rcm_[rcm_lon_name],
+                                #'time' : rcm_[self.GB_climate_coordinates_name["time"]],
+                                var_name: data_obs
+                            })
+                            
+                            file_to = f"input_preprocess/obs/{var_name}"
+                            self._mkdir(file_to)
+                            new_obs_file.to_netcdf(f"{file_to}/OBS_{var_name}_{in_year}_{formatted_month}.nc")
+        
+                        except Exception as e:
+                            print(f"Error processing {obs_file}: {e}")
+                            
+                        rcm_.close()
+                        obs_data.close()
+        self.display(self.GB_list_file_process)
+        
+    def crop_dromain_to_ncfile(self,rcm,filename,var_name):
+        lat1, lat2, lon1, lon2 = self.GB_lonlatbox.values()
+        rcm_lat_name = self.GB_climate_coordinates_name["lat"]
+        rcm_lon_name = self.GB_climate_coordinates_name["lon"]
+        lat_bnds = [lat1, lat2]
+        lon_bnds = [lon1, lon2]
+        lat_mask = (rcm[rcm_lat_name] >= lat_bnds[0]) & (rcm[rcm_lat_name] <= lat_bnds[1])
+        lon_mask = (rcm[rcm_lon_name] >= lon_bnds[0]) & (rcm[rcm_lon_name] <= lon_bnds[1])
+        mask = lat_mask & lon_mask
+        rcm_cropped = rcm.where(mask, drop=True)
+        
+        encoding = {
+            'time': {
+                'units': 'seconds since 1949-12-01T00:00:00+00:00',
+                'dtype': 'float64'  # dtype is float64
+            }
+        }
+        #self.GB_input_path = "input_preprocess"
+        tmp_path = f"input_preprocess/{var_name}"
+        
+        self._mkdir(tmp_path)
+        rcm_cropped.to_netcdf(f"{tmp_path}/{filename}", encoding=encoding)
+
+        
+    def get_files_sorted_by_date_range(self,folder_path, start_year, end_year, keyword,re_get_file):
+        pattern = os.path.join(folder_path, '*.nc')
+        all_files = glob.glob(pattern)
+    
+        files_with_dates = []
+        
+        for f in all_files:
+            if keyword in os.path.basename(f):
+                try:
+                    ds = xr.open_dataset(f) # open nc file to checking period.
+                    time = ds.time
+                    if len(time) > 0:
+                        date = pd.to_datetime(time.values[0])
+                        year = date.year
+                        month = date.month
+                        
+                        if start_year <= year <= end_year:
+                            
+                            if( re_get_file == True):
+                                file_name = f"{os.path.basename(f)}"
+                                files_with_dates.append((file_name, year, month))
+                            else:
+                                file_name = f"inp_{os.path.basename(f)}"
+                                getFileProcess.crop_dromain_to_ncfile(self,ds,file_name,keyword)
+                                files_with_dates.append((file_name, year, month))
+                            
+                            
+                except Exception as e:
+                    print(f"Error reading {f}: {e}")
+        
+        files_with_dates.sort(key=lambda x: (x[1], x[2]))
+        
+        sorted_files = [(f[0], f[1], f[2]) for f in files_with_dates]
+        
+        full_date_range = pd.date_range(start=f'{start_year}-01', end=f'{end_year}-12', freq='MS')
+        
+        actual_dates = set(pd.to_datetime([f'{year}-{month:02d}' for _, year, month in files_with_dates]))
+        missing_dates = set(full_date_range) - actual_dates
+        
+        if missing_dates:
+            raise FileNotFoundError(f"File not found. {folder_path} : {missing_dates}")
+            #for date in sorted(missing_dates):
+                #print(date.strftime('%Y-%m'))
+        return sorted_files
     
     # Create table path file
-    def get_file_list(self,sYR,eYR):
+    def get_file_list2(self,sYR,eYR):
         head_name = ["year","month"] + list(self.GB_climate_variable_name.values())
         self.GB_list_file_process = pd.DataFrame(columns=head_name, index=range(0))
         
@@ -228,9 +394,186 @@ class getFileProcess(mainDefind):
 class netcdf2dataframe(mainDefind):
     def __init__(self):
         mainDefind.__init__(self)
+
+    def bias_correction_run(self,fobs,fhist,fproj,clivar,adjust_method,N,kind):
+        obsh = xr.open_dataset(fobs)
+        simh = xr.open_dataset(fhist)
+        if(fhist == fproj):
+            simp = simh
+        else:
+            simp = xr.open_dataset(fproj)
         
+        simh = simh.assign_coords(time=pd.DatetimeIndex(simh.time).normalize())
+        simp = simp.assign_coords(time=pd.DatetimeIndex(simp.time).normalize())
+    
+        if((adjust_method == "quantile_mapping") or (adjust_method == "quantile_delta_mapping")):
+            result = adjust(
+                method=adjust_method,
+                obs=obsh[clivar],
+                simh=simh[clivar],
+                simp=simp[clivar],
+                n_quantiles=N,
+                kind=kind
+            )
+        else:
+            N = f"time.{N}"
+            print(N)
+            result = adjust(
+                method=adjust_method,
+                obs=obsh[clivar],
+                simh=simh[clivar],
+                simp=simp[clivar],
+                group=f"{N}",
+                kind=kind
+            )
+        obsh.close()
+        simh.close()
+        simp.close()
+        return result
+        
+    
+    def bias_correction_prepare(self):
+        self._mkdir("input_preprocess/file_merge/")
+        #filtered_columns = [col for col in self.GB_list_file_process.columns if 'year' not in col and 'month' not in col]
+        #filtered_columns = ["pr","tasmax","tasmin"]
+
+        filtered_columns = [self.GB_climate_variable_name["rain"],
+                            self.GB_climate_variable_name["tmean"],  
+                            self.GB_climate_variable_name["tmax"],
+                            self.GB_climate_variable_name["tmin"] ]
+        for clivar in filtered_columns:
+            filenames =  f"input_preprocess/{clivar}/" + self.GB_list_file_process[clivar]
+            
+            ds = xr.open_mfdataset(filenames, combine='by_coords')
+            sc = self.GB_model_detail["scenario"]
+            output_path = f'input_preprocess/file_merge/rcm_{clivar}_{sc}.nc'
+            ds.to_netcdf(output_path)
+            ds.close()
+
+            if(self.GB_experiment == "historical"):
+                obs_var = clivar
+                # OBS_{obs_var}_{in_year}_{formatted_month}.nc
+                obs_path = f"input_preprocess/obs/{obs_var}/"
+                pattern = os.path.join(obs_path, '*.nc')
+                all_files = glob.glob(pattern)
+    
+                ds = xr.open_mfdataset(all_files, combine='by_coords')
+                output_path = f'input_preprocess/file_merge/obs_{obs_var}.nc'
+                ds.to_netcdf(output_path)
+                ds.close()
+            
+            sc = self.GB_model_detail["scenario"]
+
+            
+            folder_path = f"input_preprocess/{clivar}/"
+
+            try:
+                # Remove the folder and all its contents
+                shutil.rmtree(folder_path)
+                #print(f"Folder '{folder_path}' and all its contents have been removed.")
+            except Exception as e:
+                print(f"Error: {e}")
+
+    def split_netcdf_by_year_month(input_file, output_folder,clivar):
+        # เปิดไฟล์ NetCDF หลัก
+        ds = xr.open_dataset(input_file)
+        
+        # ตรวจสอบว่ามีตัวแปรเวลา
+        if 'time' not in ds:
+            raise ValueError("The dataset does not contain a 'time' coordinate.")
+        
+        # แปลงพิกัดเวลาเป็น datetime
+        ds['time'] = pd.to_datetime(ds['time'].values)
+        
+        # แปลงพิกัดเวลาเป็น Series ของ pandas
+        time_series = pd.Series(ds['time'].values)
+        
+        # หาค่าที่ไม่ซ้ำกันของปีและเดือน
+        years = time_series.dt.year.unique()
+        months = time_series.dt.month.unique()
+        
+        # สร้างโฟลเดอร์สำหรับการบันทึกไฟล์ใหม่
+        if not os.path.exists(f"{output_folder}/{clivar}/"):
+            os.makedirs(f"{output_folder}/{clivar}/")
+        
+        # แยกข้อมูลตามปีและเดือน
+        for year in years:
+            for month in range(1, 13):  # เดือน 1 ถึง 12
+                # สร้าง mask สำหรับปีและเดือนที่ต้องการ
+                time_mask = (ds['time'].dt.year == year) & (ds['time'].dt.month == month)
+                
+                if time_mask.any():  # ตรวจสอบว่ามีข้อมูลหรือไม่
+                    # เลือกข้อมูลตาม mask
+                    ds_subset = ds.sel(time=time_mask)
+                    
+                    # สร้างชื่อไฟล์สำหรับปีและเดือน
+                    output_file = os.path.join(f"{output_folder}/{clivar}/", f"{clivar}_{year}_{month:02d}.nc")
+                    
+                    # บันทึกข้อมูลที่เลือกลงในไฟล์ NetCDF ใหม่
+                    ds_subset.to_netcdf(output_file)
+                    #print(f"Saved {output_file}")       
+            
+            #f_obs  = f_obs
     def dataframe_format(self):
-        netcdf2dataframe.query_data2dataframe(self)
+        
+        if self.GB_OBS_bias_status == True:
+            print("Bias Correction !!")
+            netcdf2dataframe.bias_correction_prepare(self)
+            filtered_columns = [self.GB_climate_variable_name["rain"],
+                            self.GB_climate_variable_name["tmean"],  
+                            self.GB_climate_variable_name["tmax"],
+                            self.GB_climate_variable_name["tmin"]]
+
+            
+            for clivar in filtered_columns:
+                #clivar = "pr"
+                fobs  = f'input_preprocess/file_merge/obs_{clivar}.nc'
+                fhist = f'input_preprocess/file_merge/rcm_{clivar}_historical.nc'
+
+                
+                if(self.GB_experiment == "historical"):
+                    fproj = f'input_preprocess/file_merge/rcm_{clivar}_historical.nc'
+                else:
+                    sc = self.GB_model_detail["scenario"]
+                    fproj = f'input_preprocess/file_merge/rcm_{clivar}_{sc}.nc'
+
+                
+                adjust_method = self.GB_OBS_bias_option['bias_method']
+                N = self.GB_OBS_bias_option['n_quantiles']
+                kind = self.GB_OBS_bias_option['kind']
+                
+                if((adjust_method == "quantile_mapping") or (adjust_method == "quantile_delta_mapping")):
+                    N = self.GB_OBS_bias_option['n_quantiles']
+                else:
+                    N = self.GB_OBS_bias_option['group']
+                    
+                data_bias = netcdf2dataframe.bias_correction_run(self,fobs,fhist,fproj,clivar,adjust_method,N,kind)
+                
+                output_path = f'input_preprocess/bias_{clivar}_historical.nc'
+                data_bias.to_netcdf(output_path)
+                data_bias.close()
+                input_file = output_path
+                output_folder = f'input_preprocess/'
+                netcdf2dataframe.split_netcdf_by_year_month(input_file, output_folder,clivar)
+            self.GB_list_file_process = pd.DataFrame()
+            
+            for var_name in self.GB_climate_variable_name.values():
+                print(f"get file {var_name}")
+                glob_arg        = "input_preprocess/" + var_name + "/"
+                sYR = self.startYear
+                eYR = self.endYear
+                lfile = getFileProcess.get_files_sorted_by_date_range(self,glob_arg, sYR, eYR, var_name,True)
+                
+                df = pd.DataFrame(lfile, columns=[var_name, 'year', 'month'])
+                df = df[['year', 'month',var_name]]
+                if(len(self.GB_list_file_process) == 0 ):
+                    self.GB_list_file_process = df
+                else:
+                    self.GB_list_file_process = pd.merge(self.GB_list_file_process, df, on=['year', 'month'], how='outer')
+            self.display(self.GB_list_file_process)
+            netcdf2dataframe.query_data2dataframe(self)
+        else:
+            netcdf2dataframe.query_data2dataframe(self)
         
         # Insert TAV and TAMP
         if (self.experiment_process == "historical" and self.time_in_file == False) :
@@ -266,7 +609,11 @@ class netcdf2dataframe(mainDefind):
 
         with open(f,'w') as file:
             file.write(filedata)
+    #def query_data2dataframe2(self):
+   #     pass:
+        
     def query_data2dataframe(self):
+        self.GB_input_path = "input_preprocess"
         self.local_data_set = list()                                 # Clean temp data_set
         control_false   = [(False)]        # 1 Jan xxxx (Start file process) (T|F) follow position $(var_name)
         control_true    = [(True)]
@@ -284,7 +631,8 @@ class netcdf2dataframe(mainDefind):
         for index, row in (self.GB_list_file_process.iterrows()):
             for idx,var_name in enumerate(self.GB_climate_variable_name.values()):
                 var_path        = var_name
-                df_DATASET = self.xnc_dataset(row[var_path],self.GB_dropvars)             # xr.open_dataset(row[var_path],drop_variables=self.dropvars)
+                df_DATASET = self.xnc_dataset(f"{self.GB_input_path}/{var_name}/{row[var_path]}",self.GB_dropvars)             # xr.open_dataset(row[var_path],drop_variables=self.dropvars)
+                #print(df_DATASET)
                 temp_df = self.xnc_to_dataframe(df_DATASET)                               # self.GB_DATASET.to_dataframe()
 
                 if (control_first_day[idx] == False) :
@@ -301,8 +649,8 @@ class netcdf2dataframe(mainDefind):
                             last_month = temp_df.index.get_level_values(self.GB_climate_coordinates_name["time"])[0].date().month
                             self.display("load dataset [%s]: %s/%s"%(var_name,temp_df.index.get_level_values(self.GB_climate_coordinates_name["time"])[0].date().year,self.endYear))
                     else:
-                        print("Please Files in directory : %s" %(row[var_path]))
-                        exit()
+                        raise FileNotFoundError("Please Files in directory : %s" %(row[var_path]))
+                        
                     if(control_first_day == control_true):
                         self.GB_dataset_1y  = netcdf2dataframe.merge_df(self, self.local_data_set)
 
@@ -350,7 +698,7 @@ class netcdf2dataframe(mainDefind):
                             topology_control.load_topology(self,self.GB_dataset_1y)
 
 
-                        self.GB_dataset_1y = netcdfCropArea.cropDomain(self, data=self.GB_dataset_1y)
+                        #self.GB_dataset_1y = netcdfCropArea.cropDomain(self, data=self.GB_dataset_1y)
                         sort_lon = self.GB_climate_coordinates_name["lon"]
                         sort_lat = self.GB_climate_coordinates_name["lat"]
                         sort_tim = self.GB_climate_coordinates_name["time"]
@@ -421,8 +769,6 @@ class netcdf2dataframe(mainDefind):
                             #self.map_plot('xlon','xlat','topo',p)
                             #plt.show()
 
-
-
                         nc2wth.convert2wth(self,this_year)
                         #print(self.tb_historical_global_T)
                         #self.to_dssat()
@@ -432,188 +778,6 @@ class netcdf2dataframe(mainDefind):
                         self.file_wth_proc.close()
                         self.display(" done.")
 
-        
-
-    def query_data2dataframe2(self):
-        self.local_data_set = list()                                 # Clean temp data_set
-        control_false   = [(False)]        # 1 Jan xxxx (Start file process) (T|F) follow position $(var_name)
-        control_true    = [(True)]
-        for i in range (1,len(self.GB_climate_variable_name)):
-            control_false.append(False)
-            control_true.append(True)
-            
-        control_true        = tuple(control_true)
-        control_false       = tuple(control_false)
-        control_first_day   = control_false
-        control_next_month  = control_first_day        # for checking next month
-        control_end_year    = control_first_day        # for end of year
-        
-        temp_date_month     = 0
-        temp_date_year      = 0
-        lastmonth           = 0
-        temp_month          = 0
-        this_year           = 0
-
-        last_month  = ""
-        for index, row in (self.GB_list_file_process.iterrows()):
-            for idx,var_name in enumerate(self.GB_climate_variable_name.values()):
-                #print(self.GB_dataset_1y)
-                var_path        = var_name                 
-                df_DATASET = self.xnc_dataset(row[var_path],self.GB_dropvars)             # xr.open_dataset(row[var_path],drop_variables=self.dropvars)
-                temp_df = self.xnc_to_dataframe(df_DATASET)                               # self.GB_DATASET.to_dataframe()
-                # df_date_index = temp_df.index.get_level_values(self.GB_climate_coordinates_name["time"])[0]
-                
-                df_date_index = temp_df.index.get_level_values(self.GB_climate_coordinates_name["time"])[0]
-
-                if (control_first_day[idx] == False) :
-                    chk_pass                    = netcdf2dataframe.check_1_jan(self,df_DATASET)
-                    list_control_first_day      = list(control_first_day)
-                    list_control_first_day[idx] = chk_pass
-                    control_first_day           = tuple(list_control_first_day)
-                    if (chk_pass):
-                        self.local_data_set.append(temp_df) 
-                        
-                        if(isinstance(df_date_index, cftime._cftime.Datetime360Day)) :
-                            temp_date_month = df_date_index.month
-                            temp_date_year  = df_date_index.year
-                            lastmonth       = temp_date_month
-                        else:
-                            temp_date_month = df_date_index.date().month
-                            temp_date_year  = df_date_index.date().year
-                            lastmonth       = temp_date_month
-                            
-                        self.display("load dataset [%s]: %s/%s"%(var_name,temp_date_year,self.endYear))
-
-                    else:
-                        print("Please Files in directory : %s" %(row[var_path]))
-                        exit()
-                    if(control_first_day == control_true):
-                        self.GB_dataset_1y  = netcdf2dataframe.merge_df(self, self.local_data_set) 
-                        self.local_data_set = list()
-                else:
-                    
-                    if(isinstance(df_date_index, cftime._cftime.Datetime360Day)) :
-                        temp_month  = df_date_index.month
-                    else:
-                        temp_month  = df_date_index.date().month
-                    # Check next month
-                    if last_month == temp_month - 1:
-                        #print(temp_df)
-                        self.local_data_set.append(temp_df)
-                        #self.display("load dataset [%s]: %s/%s"%(var_name,temp_df.index.get_level_values(self.GB_climate_coordinates_name["time"])[0].date().year,temp_df.index.get_level_values(self.GB_climate_coordinates_name["time"])[0].date().month))
-                        list_control_next_month         = list(control_next_month)
-                        list_control_next_month[idx]    = True
-                        control_next_month              = tuple(list_control_next_month)
-                        # Check next month 
-                        if(control_next_month == control_true):
-                            last_month          = temp_month 
-                            control_next_month  = control_false #(False,False,False,False,False,False,False,False)  
-                            #self.display("load dataset [%s]: %s/%s"%(var_name,temp_df.index.get_level_values(self.GB_climate_coordinates_name["time"])[0].date().year,temp_df.index.get_level_values(self.GB_climate_coordinates_name["time"])[0].date().month))                          
-                            #self.dataset = self.dataset.append(self.merge_df(),sort=False)  
-                            self.GB_dataset_1y  = pd.concat([self.GB_dataset_1y,netcdf2dataframe.merge_df(self, self.local_data_set)],sort=False)                         
-                            self.local_data_set = list()
-                            
-                    # Check End of Year :> goto dataframe_format(self.merge_df())
-                    if (control_end_year[idx] == False and temp_month == 12):
-                        list_control_end_year       = list(control_end_year)
-                        list_control_end_year[idx]  = True
-                        control_end_year            = tuple(list_control_end_year)
-                    #print(control_end_year)
-                    
-                    if (control_end_year == control_true):
-                        ##print("done.")
-                        self.display("Converting ... ")
-                        if(isinstance(df_date_index, cftime._cftime.Datetime360Day)) :
-                            this_year = df_date_index.year
-                        else:
-                            this_year = df_date_index.date().year
-                        
-                        if(self.load_topo == False):
-                            # if  self.load_topo    = True  :When Created Shapefile  
-                            self.display("-- TOPO --")                   
-                            topology_control.load_topology(self,self.GB_dataset_1y) 
-                            
-                    
-                        self.GB_dataset_1y = netcdfCropArea.cropDomain(self, data=self.GB_dataset_1y) 
-                        sort_lon = self.GB_climate_coordinates_name["lon"]
-                        sort_lat = self.GB_climate_coordinates_name["lat"]
-                        sort_tim = self.GB_climate_coordinates_name["time"]  
-                        self.GB_dataset_1y.sort_values(by=[sort_lat,sort_lon,sort_tim], inplace=True, ascending = (False, True, True)) 
-                        
-                        self.GB_unique_lat = list(np.unique(self.GB_dataset_1y[self.GB_climate_coordinates_name["lat"]]))
-                        self.GB_unique_lon = list(np.unique(self.GB_dataset_1y[self.GB_climate_coordinates_name["lon"]]))
-                        self.resolution_raw_lat = abs(self.GB_unique_lat[0] - self.GB_unique_lat[1])
-                        self.resolution_raw_lon = abs(self.GB_unique_lon[0] - self.GB_unique_lon[1])
-                        lat_data = sorted(self.GB_unique_lat , reverse = True) 
-                        lon_data = sorted(self.GB_unique_lon , reverse = False)
-                        self.GB_dataset_1y["topo"] = np.nan
-                        latlon_tmp_convert = list()
-                    
-                        grid_count = 0
-                        for lat_data_1 in lat_data:
-                            for lon_data_1 in lon_data:
-                                    temp_topo = topology_control.get_topo(self,lat_data_1,lon_data_1)
-                                    if(math.isnan(temp_topo) == False):
-                                        grids_no = nc2wth.num_of_grid(self,grid_count)
-                                        grid_count += 1                                        
-                                        latlon_tmp_convert.append([grids_no,lat_data_1,lon_data_1,grids_no,grids_no])
-                    
-                                        
-                                    self.GB_dataset_1y.loc[((self.GB_dataset_1y[self.GB_climate_coordinates_name["lon"]] ==  lon_data_1)    \
-                                                &(self.GB_dataset_1y[self.GB_climate_coordinates_name["lat"]] ==  lat_data_1)), 'topo'] = temp_topo
-                                    
-                        self.latlon_convert = pd.DataFrame(latlon_tmp_convert, columns=['Grid_NO','Latitude','Longitude','Input_FDD','WSTA'])
-                        
-                        self.GB_dataset_1y = self.GB_dataset_1y.dropna(subset = ["topo"])
-                        
-                        
-                        if(self.load_topo == False):
-                            self.load_topo    = True 
-                        
-                            self._mkdir(self.GB_output_path+"/shp/")
-                                                        
-                            # ---------------------------------
-                            
-                            #Extent
-                            #99.2190170288085938,14.0640048980712891 : 100.3504028320312500,15.8129625320434570
-                            #lon_L = 99.2190170288086
-                            #lon_R = 100.3504028320312
-                            #lat_T = 15.812962532043457
-                            #lat_B = 14.064004898071289
-                            res_lat = (self.resolution_raw_lat/2)
-                            res_lon = (self.resolution_raw_lon/2)
-                            list_geometry = list()
-                            for inx, row in self.latlon_convert.iterrows():
-                                #print(row["Longitude"])
-                                lon_L = row["Longitude"] - res_lon
-                                lon_R = row["Longitude"] + res_lon
-                                lat_T = row["Latitude"] + res_lat
-                                lat_B = row["Latitude"] - res_lat
-                    
-                                #print("%s, %s, %s, %s"%(lon_L, lon_R,lat_T, lat_B))
-                                grid_polygon = [[lon_L, lat_T], [lon_R, lat_T], [lon_R, lat_B], [lon_L,lat_B], [lon_L, lat_T]]
-                                list_geometry.append(Polygon(grid_polygon))
-                            
-                            self.latlon_convert['geometry'] = list_geometry
-                            
-                            crs = 'epsg:4326'
-                            #gpd.GeoDataFrame(df, geometry=gpd.points_from_xy(x=df.lon, y=df.lat), crs = 'EPSG:4326')
-                            polygon = gpd.GeoDataFrame(self.latlon_convert, crs=crs, geometry=self.latlon_convert.geometry)       
-                                                        
-                            polygon.to_file(filename=self.GB_output_path + "/shp" + '/referance_polygon.shp', driver="ESRI Shapefile")
-                            
-                            #p = self.GB_dataset_1y.loc['1972-01-01']
-                            #self.map_plot('xlon','xlat','topo',p)
-                            #plt.show()  
-                        
-                        nc2wth.convert2wth(self,this_year)             
-                        #print(self.tb_historical_global_T)
-                        #self.to_dssat()
-                        control_end_year    = control_false #(False,False,False,False,False)
-                        control_first_day   = control_false #(False,False,False,False,False)
-                        self.GB_dataset_1y       = list()
-                        self.file_wth_proc.close()
-                        self.display(" done.")
 
     def merge_df(self,local_data_set):
         local_dataset = pd.DataFrame(self.local_data_set[2]) 
@@ -696,17 +860,17 @@ class   netcdfCropArea(mainDefind):
         if(la1 >= -90 and la1 <= 90 and la2 >= -90 and la2 <= 90 and la2 >= la1):
             if(lo1 >= -180 and lo1 <= 180 and lo2 >= -180 and lo2 <= 180 and lo2 >= lo1 ):
                 if(la1 < arr_LAT_min or la1 > arr_LAT_max): 
-                    print("!!! LAT1 out of area : %s Latitude(min, max):(%s, %s)" %(la1,arr_LAT_min,arr_LAT_max))
-                    exit()
+                    raise ValueError("!!! LAT1 out of area : %s Latitude(min, max):(%s, %s)" %(la1,arr_LAT_min,arr_LAT_max))
+                    
                 elif(la2 < arr_LAT_min or la2 > arr_LAT_max): 
-                    print("!!! LAT2 out of area : %s Latitude(min, max):(%s, %s)" %(la2,arr_LAT_min,arr_LAT_max))
-                    exit()
+                    raise ValueError("!!! LAT2 out of area : %s Latitude(min, max):(%s, %s)" %(la2,arr_LAT_min,arr_LAT_max))
+                   
                 elif(lo1 < arr_LON_min or lo1 > arr_LON_max): 
-                    print("!!! LON1 out of area : %s Longitude(min, max):(%s, %s)" %(lo1,arr_LON_min,arr_LON_max))
-                    exit()
+                    raise ValueError("!!! LON1 out of area : %s Longitude(min, max):(%s, %s)" %(lo1,arr_LON_min,arr_LON_max))
+                    
                 elif(lo2 < arr_LON_min or lo2 > arr_LON_max):
-                    print("!!! LON2 out of area : %s Longitude(min, max):(%s, %s)" %(lo2,arr_LON_min,arr_LON_max))
-                    exit()
+                    raise ValueError("!!! LON2 out of area : %s Longitude(min, max):(%s, %s)" %(lo2,arr_LON_min,arr_LON_max))
+                  
                 else:
                     self.display("-- select Area")
                     self.display("la1=%s la2=%s, lo1=%s, lo2=%s" %(la1,la2,lo1,lo2))
@@ -727,7 +891,7 @@ class   netcdfCropArea(mainDefind):
                 print("* Please check range of longitude in degrees is -180 and 180 and must be LOT1 <= LON2")
                 print("** Longitude(min,max) = (%s,%s)"%(arr_LON_min,arr_LON_max))
                 print("!!!")
-                exit()
+                raise ValueError()
         else:
                 print("!!!")
                 print("LAT1 : %s" %(la1))
@@ -735,7 +899,7 @@ class   netcdfCropArea(mainDefind):
                 print("* Please check range of latitude in degrees is -90 and 90 and must be LAT1 <= LAT2")
                 print("** Latitude(min,max) = (%s,%s)"%(arr_LAT_min,arr_LAT_max))
                 print("!!!")
-                exit()
+                raise ValueError()
 
 class nc2wth(mainDefind):
     def __init__(self):
@@ -979,8 +1143,6 @@ class nc2wth(mainDefind):
                 mock_tav = str(round(float(INSI_historical["TAV"]),1))
                 mock_amp = str(round(float(INSI_historical["TAMP"]),1))
             
-            
-
              # amp             = T_max_avg_year - T_min_avg_year     
 
             tmht            = 2.0                                # m
@@ -1103,9 +1265,28 @@ class topology_control(mainDefind):
     def load_topology(self,climate_data):
         lib_path             = inspect.getfile(WTH)
         topo_file            = os.path.dirname(os.path.abspath(lib_path)) + "/topology/topo_land.nc"
-        self.GB_data_topo    = self.xnc_dataset(topo_file,self.GB_dropvars).to_dataframe()       
+        #self.GB_data_topo    = self.xnc_dataset(topo_file,self.GB_dropvars).to_dataframe()       
+        #self.GB_data_topo.reset_index(inplace=True)
+        
+        rcm = xr.open_dataset(topo_file) 
+        print(rcm)
+        lat1, lat2, lon1, lon2 = self.GB_lonlatbox.values()
+        rcm_lat_name = "lat"
+        rcm_lon_name = "lon"
+        lat_bnds = [lat1, lat2]
+        lon_bnds = [lon1, lon2]
+        lat_mask = (rcm[rcm_lat_name] >= lat_bnds[0]) & (rcm[rcm_lat_name] <= lat_bnds[1])
+        lon_mask = (rcm[rcm_lon_name] >= lon_bnds[0]) & (rcm[rcm_lon_name] <= lon_bnds[1])
+        mask = lat_mask & lon_mask
+        
+        rcm_cropped = rcm.where(mask, drop=True)
+        rcm_cropped.to_netcdf(f"topo.nc")
+        
+        self.GB_data_topo    = self.xnc_dataset("topo.nc",self.GB_dropvars).to_dataframe()       
         self.GB_data_topo.reset_index(inplace=True)
-        self.GB_data_topo    = netcdfCropArea.cropDomain(self,status="topo", topo=self.GB_data_topo,data=climate_data).dropna(subset = ["topo"])    
+        
+        self.display(self.GB_data_topo)
+        #self.GB_data_topo    = netcdfCropArea.cropDomain(self,status="topo", topo=self.GB_data_topo,data=climate_data).dropna(subset = ["topo"])    
         #self.map_plot('lon','lat','topo',self.GB_data_topo)
         
     def get_topo(self,lat,lon):
@@ -1126,19 +1307,21 @@ class topology_control(mainDefind):
         idx     = (np.abs(array - value)).argmin()  
         #self.display(array + " " +array.shape + " " + type(array)+ " " + value)  
         return array[idx]
+        
     
 class WTH(mainDefind):
     def __init__(self):
         mainDefind.__init__(self)
-    
-    def define_climate_variable(self, pr="",
+    # efine_climate_variable("tas","tasmax","tasmin","hurs","pr","sfcWind","rsds")
+    def define_climate_variable(self, 
                                 tas="",
                                 tasmax="",
                                 tasmin="",
-                                rsns="",
                                 hurs="",
-                                ps="",
-                                wind=""):
+                                pr="",
+                                wind="",
+                                rsns="",
+                                ps=""):
         # 
         if pr       != "" : self.GB_climate_variable_name["rain"]   = pr
         if tas      != "" : self.GB_climate_variable_name["tmean"]  = tas    
@@ -1150,28 +1333,54 @@ class WTH(mainDefind):
         if wind     != "" : self.GB_climate_variable_name["wind"]   = wind
         
     
-    def define_coordinates_name(self, x="lat",y="lon",t='time'):
+    def define_coordinates(self, x="lat",y="lon",t='time'):
         self.GB_climate_coordinates_name = {"lat":x, "lon":y, "time":t}
 
     def define_input_path(self, input_path=""):
         self.GB_input_path = input_path
     
     def define_domain(self, la1=0, la2=0, lo1=0, lo2=0):
-        self.GB_lonlatbox = {"lat_min":la1, "lat_max":la2, "lon_min":lo1, "lon_max":lo2}
+        self.GB_lonlatbox = {"lat_min":la2, "lat_max":la1, "lon_min":lo1, "lon_max":lo2}
 
-    def define_description(self, rcm_ver="", model="", experiment="" ):
-        self.GB_model_detail = {"model-simulation":rcm_ver,"model-name":model,"scenario":experiment}
+    def define_description(self, rcm_ver="", model="", scenario="" ):
+        self.GB_model_detail = {"model-simulation":rcm_ver,"model-name":model,"scenario":scenario}
         
+    def define_reanalysis_path(self, obs_path=""):
+        self.GB_OBS_path = obs_path
+
+    def define_reanalysis_coordinates(self, lat = "latitude", lon = "longitude"):
+        self.GB_OBS_coordinates_name = {"lat":lat, "lon":lon, "time":"time"}
+
+    def define_reanalysis_variable(self, tas="t2m", tmax="tmax", tmin="tmin", pr="tp"):
+        self.GB_OBS_variables_name = {"tas":tas, "tmax":tmax, "tmin":tmin,"pr":pr}
+
+    def bias_correction(self, bias_method = "quantile_mapping", n_quantiles=250, group="", kind="+"):
+        
+        self.GB_OBS_bias_status = True
+        self.GB_OBS_bias_option =  {"bias_method":bias_method, 
+                                    "n_quantiles":n_quantiles, 
+                                    "group":group,
+                                    "kind":kind} 
     def topo(self):
         topology_control.load_topology(self)  
+
+    #ncObj.convert2dssat(output_path="DSSAT_output/",period="projection",start_year=2030,end_year=2060,single_year_file = False)
+    def convert2dssat(self,
+                      output_path="",
+                      period="", 
+                      start_year="",
+                      end_year="",
+                      single_year_file = False,
+                      ):
         
-    def convert2dssat(self,output_path="",experiment="", start_year="",end_year="",single_year_file = False):
         self.GB_output_path = output_path+"/"+self.GB_model_detail['model-name']+"/"
         
         experiment_check=["historical","projection","force"]
+        experiment = period
+        self.GB_experiment = experiment
         if experiment not in experiment_check :
-            print("Experiment input Error!!")
-            exit()
+            raise ValueError("Experiment input Error!!")
+            
         else:
             self.experiment_process = experiment
 
@@ -1180,16 +1389,38 @@ class WTH(mainDefind):
             print("check file table Tav (histotical first)")
         
         t1_start = process_time() 
-        
-        
-         
         self._mkdir(self.GB_output_path)
-        
         self.time_in_file   = single_year_file    
         self.startYear      = start_year
         self.endYear        = end_year
-        getFileProcess.get_file_list(self,start_year,end_year+1) 
+        self.GB_startYear      = start_year
+        self.GB_endYear        = end_year
+
+        self.display(print("Start"))
+        main_folder_path = "input_preprocess"
+        excluded_folders = ["file_merge"]
+        
+        try:
+            # Iterate through the contents of the main folder
+            for item in os.listdir(main_folder_path):
+                item_path = os.path.join(main_folder_path, item)
+                if item not in excluded_folders:
+                    if os.path.isdir(item_path):
+                        # Remove the folder and its contents
+                        shutil.rmtree(item_path)
+                    else:
+                        # Remove files directly
+                        os.remove(item_path)
+            #print(f"Selected contents of '{main_folder_path}' have been removed, excluding {excluded_folders}.")
+        except Exception as e:
+            print(f"Error: {e}")
             
+        
+            
+        getFileProcess.get_file_list(self,start_year,end_year) 
+        #print(self.GB_list_file_process)
+        
+        
         netcdf2dataframe.dataframe_format(self)
         
         t1_stop = process_time()
