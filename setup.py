@@ -11,7 +11,7 @@ setup(
     author_email='rucore.center@gmail.com, nick.ratchanan@gmail.com',
     url='https://github.com/RU-CORE-LAB/wNetCDF2DSSAT',
     install_requires=[
-        'numpy==1.26.4',
+        'numpy',
         'cftime',
         'h5netcdf',
         'geopandas',
@@ -23,7 +23,7 @@ setup(
         'tqdm',
         'matplotlib',
         'python-cmethods',
-
+        #'numpy==1.26.4',
         #'cftime>=1.6.3',
         #'h5netcdf>=1.3.0',
         #'geopandas>=0.14.3',
