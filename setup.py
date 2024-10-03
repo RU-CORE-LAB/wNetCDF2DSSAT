@@ -18,7 +18,7 @@ setup(
         'matplotlib',
         'pyshp',
         'geopandas',
-        'python-methods',
+        'python-cmethods',
         'h5netcdf',
         #'netCDF4',
         'h5py',
