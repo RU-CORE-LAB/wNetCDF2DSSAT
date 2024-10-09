@@ -287,50 +287,56 @@ class getFileProcess(mainDefind):
         rcm_cropped.to_netcdf(f"{tmp_path}/{filename}", encoding=encoding)
 
         
-    def get_files_sorted_by_date_range(self,folder_path, start_year, end_year, keyword,re_get_file):
-        pattern = os.path.join(folder_path, '*.nc')
-        all_files = glob.glob(pattern)
-    
-        files_with_dates = []
-        
-        for f in all_files:
-            if keyword in os.path.basename(f):
-                try:
-                    ds = xr.open_dataset(f) # open nc file to checking period.
-                    time = ds.time
-                    if len(time) > 0:
-                        date = pd.to_datetime(time.values[0])
-                        year = date.year
-                        month = date.month
-                        
-                        if start_year <= year <= end_year:
-                            
-                            if( re_get_file == True):
-                                file_name = f"{os.path.basename(f)}"
-                                files_with_dates.append((file_name, year, month))
-                            else:
-                                file_name = f"inp_{os.path.basename(f)}"
-                                getFileProcess.crop_dromain_to_ncfile(self,ds,file_name,keyword)
-                                files_with_dates.append((file_name, year, month))
-                            
-                            
-                except Exception as e:
-                    print(f"Error reading {f}: {e}")
-        
-        files_with_dates.sort(key=lambda x: (x[1], x[2]))
-        
-        sorted_files = [(f[0], f[1], f[2]) for f in files_with_dates]
-        
-        full_date_range = pd.date_range(start=f'{start_year}-01', end=f'{end_year}-12', freq='MS')
-        
-        actual_dates = set(pd.to_datetime([f'{year}-{month:02d}' for _, year, month in files_with_dates]))
-        missing_dates = set(full_date_range) - actual_dates
-        
-        if missing_dates:
-            raise FileNotFoundError(f"File not found. {folder_path} : {missing_dates}")
-            #for date in sorted(missing_dates):
-                #print(date.strftime('%Y-%m'))
-        return sorted_files
+    def get_files_sorted_by_date_range(self, folder_path, start_year, end_year, keyword, re_get_file):
+      pattern = os.path.join(folder_path, '*.nc')
+      all_files = glob.glob(pattern)
+      
+      files_with_dates = []
+      
+      for f in all_files:
+          if keyword in os.path.basename(f):
+              try:
+                  ds = xr.open_dataset(f)  # open nc file to check the period.
+                  time = ds.time
+                  if len(time) > 0:
+                      # Handling different time formats
+                      first_time_value = time.values[0]
+                      
+                      # Check if the time value is a cftime object
+                      if isinstance(first_time_value, cftime.datetime):
+                          date = pd.to_datetime(first_time_value.strftime('%Y-%m-%d'))
+                      else:
+                          date = pd.to_datetime(first_time_value)
+                      
+                      year = date.year
+                      month = date.month
+                      
+                      if start_year <= year <= end_year:
+                          if re_get_file:
+                              file_name = f"{os.path.basename(f)}"
+                              files_with_dates.append((file_name, year, month))
+                          else:
+                              file_name = f"inp_{os.path.basename(f)}"
+                              getFileProcess.crop_dromain_to_ncfile(self, ds, file_name, keyword)
+                              files_with_dates.append((file_name, year, month))
+                              
+              except Exception as e:
+                  print(f"Error reading {f}: {e}")
+      
+      files_with_dates.sort(key=lambda x: (x[1], x[2]))
+      sorted_files = [(f[0], f[1], f[2]) for f in files_with_dates]
+      
+      # Generate the full date range for the specified years
+      full_date_range = pd.date_range(start=f'{start_year}-01', end=f'{end_year}-12', freq='MS')
+      
+      # Check for missing dates
+      actual_dates = set(pd.to_datetime([f'{year}-{month:02d}' for _, year, month in files_with_dates]))
+      missing_dates = set(full_date_range) - actual_dates
+      
+      if missing_dates:
+          raise FileNotFoundError(f"File not found. {folder_path} : {missing_dates}")
+      
+      return sorted_files
     
     # Create table path file
     def get_file_list2(self,sYR,eYR):
