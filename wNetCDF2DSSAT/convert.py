@@ -1,6 +1,6 @@
 # ::::::::::::::::::::::::::::::::::::::::::::::::::::::::
 # Start up @ Aug 2022
-# _wNetCDF2DSSAT.py 2026 Version 1.5
+# _wNetCDF2DSSAT.py Version 1.4
 # Written by Nick Ratchanan (RU-CORE).
 # ::::::::::::::::::::::::::::::::::::::::::::::::::::::::
 
@@ -482,41 +482,41 @@ class netcdf2dataframe(mainDefind):
                 print(f"Error: {e}")
 
     def split_netcdf_by_year_month(input_file, output_folder,clivar):
-        # เปิดไฟล์ NetCDF หลัก
+       
         ds = xr.open_dataset(input_file)
         
-        # ตรวจสอบว่ามีตัวแปรเวลา
+        
         if 'time' not in ds:
             raise ValueError("The dataset does not contain a 'time' coordinate.")
         
-        # แปลงพิกัดเวลาเป็น datetime
+        
         ds['time'] = pd.to_datetime(ds['time'].values)
         
-        # แปลงพิกัดเวลาเป็น Series ของ pandas
+       
         time_series = pd.Series(ds['time'].values)
         
-        # หาค่าที่ไม่ซ้ำกันของปีและเดือน
+        
         years = time_series.dt.year.unique()
         months = time_series.dt.month.unique()
         
-        # สร้างโฟลเดอร์สำหรับการบันทึกไฟล์ใหม่
+        
         if not os.path.exists(f"{output_folder}/{clivar}/"):
             os.makedirs(f"{output_folder}/{clivar}/")
         
-        # แยกข้อมูลตามปีและเดือน
+       
         for year in years:
             for month in range(1, 13):  # เดือน 1 ถึง 12
-                # สร้าง mask สำหรับปีและเดือนที่ต้องการ
+               
                 time_mask = (ds['time'].dt.year == year) & (ds['time'].dt.month == month)
                 
                 if time_mask.any():  # ตรวจสอบว่ามีข้อมูลหรือไม่
-                    # เลือกข้อมูลตาม mask
+                    
                     ds_subset = ds.sel(time=time_mask)
                     
-                    # สร้างชื่อไฟล์สำหรับปีและเดือน
+                    
                     output_file = os.path.join(f"{output_folder}/{clivar}/", f"{clivar}_{year}_{month:02d}.nc")
                     
-                    # บันทึกข้อมูลที่เลือกลงในไฟล์ NetCDF ใหม่
+                    
                     ds_subset.to_netcdf(output_file)
                     #print(f"Saved {output_file}")       
             
@@ -1144,14 +1144,35 @@ class nc2wth(mainDefind):
                 else:
                     self.TAV[grid_year] = T_mean_avg_year
                     self.TAMP[grid_year] = amp
-            elif (self.experiment_process == "projection"):
-                print( self.tb_historical_global_T)
-                print(ngrid)
-                INSI_historical = self.tb_historical_global_T[self.tb_historical_global_T['INSI'] == ngrid]
-                mock_tav = str(round(float(INSI_historical["TAV"]),1))
-                mock_amp = str(round(float(INSI_historical["TAMP"]),1))
             
-             # amp             = T_max_avg_year - T_min_avg_year     
+            elif self.experiment_process == "projection":
+                INSI_historical = self.tb_historical_global_T[
+                    self.tb_historical_global_T["INSI"].astype(str).str.strip() == str(ngrid)
+                ]
+            
+                if INSI_historical.empty:
+                    raise ValueError(
+                        f"Historical TAV/TAMP not found for grid {ngrid}"
+                    )
+            
+                if len(INSI_historical) != 1:
+                    raise ValueError(
+                        f"Duplicate historical TAV/TAMP records for grid {ngrid}"
+                    )
+            
+                tav = float(INSI_historical["TAV"].iloc[0])
+                amp = float(INSI_historical["TAMP"].iloc[0])
+            
+                if not np.isfinite(tav) or not np.isfinite(amp):
+                    raise ValueError(
+                        f"Invalid historical TAV/TAMP for grid {ngrid}"
+                    )
+            
+                mock_tav = str(round(tav, 1))
+                mock_amp = str(round(amp, 1))
+
+            
+            # amp             = T_max_avg_year - T_min_avg_year     
 
             tmht            = 2.0                                # m
             wndht           = 2.0                                # m
