@@ -1,6 +1,6 @@
 # ::::::::::::::::::::::::::::::::::::::::::::::::::::::::
 # Start up @ Aug 2022
-# _wNetCDF2DSSAT.py Version 1.4
+# _wNetCDF2DSSAT.py 2026 Version 1.5
 # Written by Nick Ratchanan (RU-CORE).
 # ::::::::::::::::::::::::::::::::::::::::::::::::::::::::
 
@@ -263,30 +263,31 @@ class getFileProcess(mainDefind):
                         obs_data.close()
         self.display(self.GB_list_file_process)
         
-    def crop_dromain_to_ncfile(self,rcm,filename,var_name):
-        lat1, lat2, lon1, lon2 = self.GB_lonlatbox.values()
-        rcm_lat_name = self.GB_climate_coordinates_name["lat"]
-        rcm_lon_name = self.GB_climate_coordinates_name["lon"]
-        lat_bnds = [lat1, lat2]
-        lon_bnds = [lon1, lon2]
-        lat_mask = (rcm[rcm_lat_name] >= lat_bnds[0]) & (rcm[rcm_lat_name] <= lat_bnds[1])
-        lon_mask = (rcm[rcm_lon_name] >= lon_bnds[0]) & (rcm[rcm_lon_name] <= lon_bnds[1])
-        mask = lat_mask & lon_mask
-        rcm_cropped = rcm.where(mask, drop=True)
-        
+    def crop_dromain_to_ncfile(self, rcm, filename, var_name):
+        bounds = tuple(self.GB_lonlatbox.values())
+        if all(value is None for value in bounds):
+            rcm_cropped = rcm
+        else:
+            if any(value is None for value in bounds):
+                raise ValueError("Domain bounds must all be specified")
+            lat1, lat2, lon1, lon2 = bounds
+            lat_name = self.GB_climate_coordinates_name["lat"]
+            lon_name = self.GB_climate_coordinates_name["lon"]
+            lat_mask = (rcm[lat_name] >= lat1) & (rcm[lat_name] <= lat2)
+            lon_mask = (rcm[lon_name] >= lon1) & (rcm[lon_name] <= lon2)
+            rcm_cropped = rcm.where(lat_mask & lon_mask, drop=True)
+            if not rcm_cropped.sizes.get("x", 1) or not rcm_cropped.sizes.get("y", 1):
+                raise ValueError("Selected domain has no grid cells")
         encoding = {
-            'time': {
-                'units': 'seconds since 1949-12-01T00:00:00+00:00',
-                'dtype': 'float64'  # dtype is float64
+            "time": {
+                "units": "seconds since 1949-12-01T00:00:00+00:00",
+                "dtype": "float64"
             }
         }
-        #self.GB_input_path = "input_preprocess"
         tmp_path = f"input_preprocess/{var_name}"
-        
         self._mkdir(tmp_path)
         rcm_cropped.to_netcdf(f"{tmp_path}/{filename}", encoding=encoding)
 
-        
     def get_files_sorted_by_date_range(self, folder_path, start_year, end_year, keyword, re_get_file):
       pattern = os.path.join(folder_path, '*.nc')
       all_files = glob.glob(pattern)
@@ -710,32 +711,38 @@ class netcdf2dataframe(mainDefind):
                         sort_tim = self.GB_climate_coordinates_name["time"]
                         self.GB_dataset_1y.sort_values(by=[sort_lat,sort_lon,sort_tim], inplace=True, ascending = (False, True, True))
 
-                        self.GB_unique_lat = list(np.unique(self.GB_dataset_1y[self.GB_climate_coordinates_name["lat"]]))
-                        self.GB_unique_lon = list(np.unique(self.GB_dataset_1y[self.GB_climate_coordinates_name["lon"]]))
-                        self.resolution_raw_lat = abs(self.GB_unique_lat[0] - self.GB_unique_lat[1])
-                        self.resolution_raw_lon = abs(self.GB_unique_lon[0] - self.GB_unique_lon[1])
-                        lat_data = sorted(self.GB_unique_lat , reverse = True)
-                        lon_data = sorted(self.GB_unique_lon , reverse = False)
-                        self.GB_dataset_1y["topo"] = np.nan
-                        latlon_tmp_convert = list()
+                        grid_columns = [sort_lat, sort_lon]
+                        grid_points = self.GB_dataset_1y[grid_columns].dropna().drop_duplicates()
+                        grid_points = grid_points.sort_values(grid_columns, ascending=[False, True])
+                        if grid_points.empty:
+                            raise ValueError("No valid geographical grid coordinates found")
+                        lat_values = np.sort(grid_points[sort_lat].unique())
+                        lon_values = np.sort(grid_points[sort_lon].unique())
+                        self.resolution_raw_lat = float(np.median(np.diff(lat_values))) if len(lat_values) > 1 else 0.0
+                        self.resolution_raw_lon = float(np.median(np.diff(lon_values))) if len(lon_values) > 1 else 0.0
+                        self.GB_unique_lat = lat_values.tolist()
+                        self.GB_unique_lon = lon_values.tolist()
+                        latlon_tmp_convert = []
+                        topo_records = []
+                        for lat_value, lon_value in grid_points.itertuples(index=False, name=None):
+                            topo_value = topology_control.get_topo(self, lat_value, lon_value)
+                            if np.isfinite(topo_value):
+                                grid_no = nc2wth.num_of_grid(self, len(latlon_tmp_convert))
+                                latlon_tmp_convert.append([grid_no, lat_value, lon_value, grid_no, grid_no])
+                                topo_records.append([lat_value, lon_value, topo_value])
+                        self.latlon_convert = pd.DataFrame(
+                            latlon_tmp_convert,
+                            columns=["Grid_NO", "Latitude", "Longitude", "Input_FDD", "WSTA"]
+                        )
+                        if self.latlon_convert.empty:
+                            raise ValueError("No valid land grid cells were found")
+                        topo_lookup = {(la, lo): value for la, lo, value in topo_records}
+                        self.GB_dataset_1y["topo"] = [
+                            topo_lookup.get((la, lo), np.nan)
+                            for la, lo in self.GB_dataset_1y[[sort_lat, sort_lon]].itertuples(index=False, name=None)
+                        ]
+                        self.GB_dataset_1y = self.GB_dataset_1y.dropna(subset=["topo"])
 
-                        grid_count = 0
-                        for lat_data_1 in lat_data:
-                            for lon_data_1 in lon_data:
-                                    temp_topo = topology_control.get_topo(self,lat_data_1,lon_data_1)
-                                    if(math.isnan(temp_topo) == False):
-                                        grids_no = nc2wth.num_of_grid(self,grid_count)
-                                        grid_count += 1
-                                        latlon_tmp_convert.append([grids_no,lat_data_1,lon_data_1,grids_no,grids_no])
-
-
-                                    self.GB_dataset_1y.loc[((self.GB_dataset_1y[self.GB_climate_coordinates_name["lon"]] ==  lon_data_1)    \
-                                                &(self.GB_dataset_1y[self.GB_climate_coordinates_name["lat"]] ==  lat_data_1)), 'topo'] = temp_topo
-
-                        self.latlon_convert = pd.DataFrame(latlon_tmp_convert, columns=['Grid_NO','Latitude','Longitude','Input_FDD','WSTA'])
-
-                        self.GB_dataset_1y = self.GB_dataset_1y.dropna(subset = ["topo"])
-                        
                         if(self.load_topo == False):
                             self.load_topo    = True
 
@@ -781,7 +788,6 @@ class netcdf2dataframe(mainDefind):
                         control_end_year    = control_false #(False,False,False,False,False)
                         control_first_day   = control_false #(False,False,False,False,False)
                         self.GB_dataset_1y       = list()
-                        self.file_wth_proc.close()
                         self.display(" done.")
 
 
@@ -1043,10 +1049,15 @@ class nc2wth(mainDefind):
             return YRD
     
     
-    def format_str_value(self,vv):
-        l = [ ("%05s"%(a)) for a in list((np.around(np.array(list(pd.to_numeric(vv))),1)))]
-        return l
     
+    def format_str_value(self, vv):
+        values = pd.to_numeric(vv, errors="coerce")
+        values = np.array(values, dtype=np.float64, copy=True)
+        values[~np.isfinite(values)] = -99.0
+        values = np.round(values, 1)
+        return [f"{v:05.1f}" for v in values]
+
+
     def clean_data_in_new_folder(self, folder):
         for filename in os.listdir(folder):
             file_path = os.path.join(folder, filename)
@@ -1058,40 +1069,19 @@ class nc2wth(mainDefind):
             except Exception as e:
                 print('Failed to delete %s. Reason: %s' % (file_path, e)) 
 
-    def avg_Tmaxmin(self,Tmax,Tmin) :
-        
-        #print(Tmax.index.get_level_values(self.GB_climate_coordinates_name["time"])[0].month)
-        Tmax_chk=0;Tmin_chk=0
-        #print(Tmax)
-        if(isinstance(Tmax.index.get_level_values(self.GB_climate_coordinates_name["time"])[0], cftime._cftime.Datetime360Day)) : 
-            Tmax_chk = [i.month for i in  Tmax.index.get_level_values(self.GB_climate_coordinates_name["time"])]
-            Tmin_chk = [i.month for i in  Tmin.index.get_level_values(self.GB_climate_coordinates_name["time"])]
-        else:
-            Tmax_chk = [i.date().month for i in  Tmax.index.get_level_values(self.GB_climate_coordinates_name["time"])]
-            Tmin_chk = [i.date().month for i in  Tmin.index.get_level_values(self.GB_climate_coordinates_name["time"])]
-        
-        localTmax = Tmax.to_frame().reset_index(drop=True) 
-        localTmin = Tmin.to_frame().reset_index(drop=True)
-        
-        localTmax["chk"] = Tmax_chk
-        localTmin["chk"] = Tmin_chk
-    
-        #monthly_mx = list()
-        #monthly_mn = list()
-        monthly_mm = list()
-        #print(np.max((localTmax[localTmax["chk"] == 2][self.GB_climate_variable_name["tmax"]]).to_numpy()))
-
-        for mm in range (1,13):
-            #print(Tmax[Tmax["chk"] == mm][self.GB_climate_variable_name["tmax"]])
-            #monthly_mx.append(np.max((localTmax[localTmax["chk"] == mm][self.GB_climate_variable_name["tmax"]]).to_numpy()))
-            #monthly_mn.append(np.min((localTmin[localTmin["chk"] == mm][self.GB_climate_variable_name["tmin"]]).to_numpy()))
-            
-            monthly_mm.append( np.max((localTmax[localTmax["chk"] == mm][self.GB_climate_variable_name["tmax"]])) - np.min((localTmin[localTmin["chk"] == mm][self.GB_climate_variable_name["tmin"]])))
-        #Tmax = np.mean(monthly_mx)
-        #Tmin = np.mean(monthly_mn)
-        Tmaxmin = np.mean(monthly_mm)
-        return Tmaxmin
-        #return Tmax - Tmin
+    def avg_Tmaxmin(self, Tmax, Tmin):
+        tmax_values = np.asarray(Tmax, dtype=float)
+        tmin_values = np.asarray(Tmin, dtype=float)
+        if tmax_values.shape != tmin_values.shape:
+            raise ValueError("Tmax and Tmin must have matching shapes")
+        times = Tmax.index.get_level_values(self.GB_climate_coordinates_name["time"])
+        months = np.array([t.month for t in times])
+        daily_mean = (tmax_values + tmin_values) / 2.0
+        monthly_mean = [np.nanmean(daily_mean[months == month])
+                        for month in range(1, 13) if np.any(months == month)]
+        if len(monthly_mean) != 12 or not np.all(np.isfinite(monthly_mean)):
+            raise ValueError("TAMP requires valid temperature data in all 12 months")
+        return float(max(monthly_mean) - min(monthly_mean))
 
     def convert2wth(self,this_year):
         # --- setting directory and file output ----
@@ -1118,7 +1108,19 @@ class nc2wth(mainDefind):
             ngrid           = latlon_convert["Grid_NO"]
             IN              = ngrid[0:2]
             SI              = ngrid[2:4]
-            elev            = float(np.unique(df1grid["topo"]))            # Elevation
+            topo_values = pd.to_numeric(
+                df1grid["topo"], errors="coerce"
+            ).dropna().unique()
+            
+            if len(topo_values) == 0:
+                raise ValueError(f"No valid elevation for grid {ngrid}")
+            
+            if len(topo_values) > 1:
+                raise ValueError(
+                    f"Multiple elevations for grid {ngrid}: {topo_values}"
+                )
+            
+            elev = float(topo_values[0])
             #print("lat = %s, lon = %s, elev = %s" %(lat,lon,elev))
             # TAMP 
             # T_max_year            = Monthly maximum average : [ max(Jan), max(Feb), ... , max(Dec) ] / 12
@@ -1181,7 +1183,7 @@ class nc2wth(mainDefind):
                 T_min_avg_year  = np.mean(df1grid[self.GB_climate_variable_name["tmin"]].to_numpy())  
                 
                 mock_tav = str(round(T_mean_avg_year,1))
-                mock_amp = str(round((T_max_avg_year - T_min_avg_year),1))
+                mock_amp = str(round(nc2wth.avg_Tmaxmin(self, df1grid[self.GB_climate_variable_name["tmax"]], df1grid[self.GB_climate_variable_name["tmin"]]), 1))
 
             
             location_wth_file = subfolder + "/" +self.file_wth_name 
@@ -1218,7 +1220,7 @@ class nc2wth(mainDefind):
             
             ps = [(math.exp(34.494 - ( 4924.99/(float(T)+237.1)))/pow(float(T)+105,1.57)/1000) for T in local_tmean] * local_rh
             
-            T_dew = nc2wth.format_str_value(self,[(116.91+237.3*math.log(float(T)))/(16.78-math.log(float(T))) for T in ps]) 
+            T_dew = nc2wth.format_str_value(self,[(116.91+237.3*math.log(float(T)))/(16.78-math.log(float(T))) if np.isfinite(T) and T > 0 else -99 for T in ps]) 
             
             #=EXP(34.494 - ( 4924.99/(T+237.1)))/(T+105)^1.57
             
@@ -1262,52 +1264,48 @@ class nc2wth(mainDefind):
                 f.write(string_repr)
                 
                     
-            self.file_wth_proc.close()
         
 class topology_control(mainDefind):
     def __init__(self):
         mainDefind.__init__(self)
         
-    def load_topology(self,climate_data):
-        lib_path             = inspect.getfile(WTH)
-        topo_file            = os.path.dirname(os.path.abspath(lib_path)) + "/topology/topo_land.nc"
-        #self.GB_data_topo    = self.xnc_dataset(topo_file,self.GB_dropvars).to_dataframe()       
-        #self.GB_data_topo.reset_index(inplace=True)
-        
-        rcm = xr.open_dataset(topo_file) 
-        print(rcm)
-        lat1, lat2, lon1, lon2 = self.GB_lonlatbox.values()
-        rcm_lat_name = "lat"
-        rcm_lon_name = "lon"
-        lat_bnds = [lat1, lat2]
-        lon_bnds = [lon1, lon2]
-        lat_mask = (rcm[rcm_lat_name] >= lat_bnds[0]) & (rcm[rcm_lat_name] <= lat_bnds[1])
-        lon_mask = (rcm[rcm_lon_name] >= lon_bnds[0]) & (rcm[rcm_lon_name] <= lon_bnds[1])
-        mask = lat_mask & lon_mask
-        
-        rcm_cropped = rcm.where(mask, drop=True)
-        rcm_cropped.to_netcdf(f"topo.nc")
-        
-        self.GB_data_topo    = self.xnc_dataset("topo.nc",self.GB_dropvars).to_dataframe()       
-        self.GB_data_topo.reset_index(inplace=True)
-        
-        self.display(self.GB_data_topo)
-        #self.GB_data_topo    = netcdfCropArea.cropDomain(self,status="topo", topo=self.GB_data_topo,data=climate_data).dropna(subset = ["topo"])    
-        #self.map_plot('lon','lat','topo',self.GB_data_topo)
-        
-    def get_topo(self,lat,lon):
-        
-        idx_lat = topology_control.nearestIDX(self,self.GB_data_topo["lat"], lat)
-        idx_lon = topology_control.nearestIDX(self,self.GB_data_topo["lon"], lon)
-        return_topo = self.GB_data_topo.loc[\
-                    (self.GB_data_topo["lat"] == idx_lat) \
-                    &(self.GB_data_topo["lon"] == idx_lon)]
-        
-        if(len(return_topo["topo"]) == 0):
-            return(np.NaN)
-        else:
-            return(float(return_topo["topo"]))
-    
+    def load_topology(self, climate_data=None):
+        lib_path = inspect.getfile(WTH)
+        topo_file = os.path.join(os.path.dirname(os.path.abspath(lib_path)), "topology", "topo_land.nc")
+        with xr.open_dataset(topo_file) as rcm:
+            bounds = tuple(self.GB_lonlatbox.values())
+            if all(value is None for value in bounds):
+                rcm_cropped = rcm
+            else:
+                if any(value is None for value in bounds):
+                    raise ValueError("Domain bounds must all be specified")
+                lat1, lat2, lon1, lon2 = bounds
+                mask = ((rcm["lat"] >= lat1) & (rcm["lat"] <= lat2) &
+                        (rcm["lon"] >= lon1) & (rcm["lon"] <= lon2))
+                rcm_cropped = rcm.where(mask, drop=True)
+            self.GB_data_topo = rcm_cropped.to_dataframe().reset_index()
+        if "topo" not in self.GB_data_topo:
+            raise ValueError("Topography file is missing variable 'topo'")
+        self.GB_data_topo = self.GB_data_topo.dropna(subset=["lat", "lon"])
+
+    def get_topo(self, lat, lon):
+        if not hasattr(self, "_topo_tree"):
+            from scipy.spatial import cKDTree
+            topo = self.GB_data_topo
+            valid_coords = np.isfinite(topo["lat"].to_numpy(dtype=float)) & np.isfinite(topo["lon"].to_numpy(dtype=float))
+            topo = topo.loc[valid_coords].reset_index(drop=True)
+            if topo.empty:
+                return np.nan
+            self._topo_points = topo
+            self._topo_lon_scale = np.cos(np.deg2rad(float(topo["lat"].mean())))
+            points = np.column_stack((topo["lat"].to_numpy(dtype=float), topo["lon"].to_numpy(dtype=float) * self._topo_lon_scale))
+            self._topo_tree = cKDTree(points)
+        if not np.isfinite(lat) or not np.isfinite(lon):
+            return np.nan
+        _, nearest = self._topo_tree.query([float(lat), float(lon) * self._topo_lon_scale])
+        value = self._topo_points.iloc[int(nearest)]["topo"]
+        return float(value) if pd.notna(value) else np.nan
+
     def nearestIDX(self,array, value):
         array   = np.asarray(array)
         idx     = (np.abs(array - value)).argmin()  
@@ -1339,8 +1337,11 @@ class WTH(mainDefind):
         if wind     != "" : self.GB_climate_variable_name["wind"]   = wind
         
     
-    def define_coordinates(self, x="lat",y="lon",t='time'):
-        self.GB_climate_coordinates_name = {"lat":x, "lon":y, "time":t}
+    def define_coordinates(self, x="lat", y="lon", t="time"):
+        if (x, y) == ("x", "y"):
+            self.GB_climate_coordinates_name = {"lat": "lat", "lon": "lon", "time": t}
+        else:
+            self.GB_climate_coordinates_name = {"lat": x, "lon": y, "time": t}
 
     def define_input_path(self, input_path=""):
         self.GB_input_path = input_path
